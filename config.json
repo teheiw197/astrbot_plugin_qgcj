@@ -1,0 +1,62 @@
+{
+    "command_prefix": "/",
+    "default_welcome": "欢迎新成员加入！",
+    "auto_review": {
+        "enabled": true,
+        "keywords": ["广告", "色情", "赌博", "诈骗", "违禁"],
+        "action": "warn",
+        "warn_threshold": 3
+    },
+    "music_api": {
+        "netease": {
+            "base_url": "https://api.example.com/netease",
+            "api_key": "your_netease_api_key"
+        },
+        "qq": {
+            "base_url": "https://api.example.com/qq",
+            "api_key": "your_qq_api_key"
+        }
+    },
+    "weather_api": {
+        "base_url": "https://api.example.com/weather",
+        "api_key": "your_weather_api_key"
+    },
+    "translate_api": {
+        "base_url": "https://api.example.com/translate",
+        "api_key": "your_translate_api_key"
+    },
+    "news_api": {
+        "base_url": "https://api.example.com/news",
+        "api_key": "your_news_api_key"
+    },
+    "game_settings": {
+        "gamble": {
+            "min_bet": 10,
+            "max_bet": 1000,
+            "win_rate": 0.4,
+            "cooldown": 300
+        },
+        "lottery": {
+            "cooldown": 1800,
+            "prizes": [
+                {"prob": 0.01, "coins": 1000, "name": "特等奖"},
+                {"prob": 0.05, "coins": 500, "name": "一等奖"},
+                {"prob": 0.1, "coins": 200, "name": "二等奖"},
+                {"prob": 0.2, "coins": 100, "name": "三等奖"},
+                {"prob": 0.64, "coins": 50, "name": "安慰奖"}
+            ]
+        }
+    },
+    "sign_in": {
+        "base_coins": 10,
+        "max_coins": 50,
+        "bonus_days": 7
+    },
+    "api_keys": {
+        "netease_music": "",
+        "qq_music": "",
+        "weather": "",
+        "translate": "",
+        "news": ""
+    }
+} 

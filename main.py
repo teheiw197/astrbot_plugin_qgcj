@@ -1,6 +1,7 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from astrbot.api import AstrBotConfig
 import json
 import os
 from datetime import datetime, timedelta
@@ -9,6 +10,19 @@ import aiohttp
 import random
 import re
 from typing import List, Dict, Optional
+import traceback
+
+class PluginError(Exception):
+    """插件基础异常类"""
+    pass
+
+class ConfigError(PluginError):
+    """配置相关异常"""
+    pass
+
+class APIError(PluginError):
+    """API调用相关异常"""
+    pass
 
 @register(
     name="qgcj",
@@ -18,7 +32,7 @@ from typing import List, Dict, Optional
     repo="https://github.com/your-repo/qgcj"
 )
 class QGCJPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.data_dir = os.path.join("data", "qgcj")
         os.makedirs(self.data_dir, exist_ok=True)
@@ -27,78 +41,307 @@ class QGCJPlugin(Star):
         self.group_data_file = os.path.join(self.data_dir, "group_data.json")
         self.user_data_file = os.path.join(self.data_dir, "user_data.json")
         self.config_file = os.path.join(self.data_dir, "config.json")
+        self.log_file = os.path.join(self.data_dir, "plugin.log")
+        
+        # 初始化日志
+        self.setup_logging()
+        
+        # 初始化数据文件
         self.init_data_files()
         
         # 加载配置
-        self.config = self.load_config()
+        self.config = config
+        self.load_config()
         
         # 启动定时任务
         asyncio.create_task(self.periodic_tasks())
+        
+        logger.info("QGCJ插件初始化完成")
+
+    def setup_logging(self):
+        """设置日志记录"""
+        import logging
+        logging.basicConfig(
+            filename=self.log_file,
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger('qgcj')
+
+    def log_error(self, error: Exception, context: str = ""):
+        """记录错误日志"""
+        error_msg = f"错误发生在{context}: {str(error)}\n{traceback.format_exc()}"
+        self.logger.error(error_msg)
+        logger.error(error_msg)
 
     def init_data_files(self):
         """初始化数据文件"""
-        default_config = {
-            "command_prefix": "/",
-            "default_welcome": "欢迎新成员加入！",
-            "auto_review": {
-                "enabled": True,
-                "keywords": ["广告", "色情", "赌博"],
-                "action": "warn"
-            },
-            "music_api": {
-                "netease": "https://api.example.com/netease",
-                "qq": "https://api.example.com/qq"
-            },
-            "weather_api": "https://api.example.com/weather",
-            "translate_api": "https://api.example.com/translate",
-            "news_api": "https://api.example.com/news"
-        }
-        
-        if not os.path.exists(self.config_file):
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(default_config, f, ensure_ascii=False, indent=2)
-        
-        if not os.path.exists(self.group_data_file):
-            with open(self.group_data_file, "w", encoding="utf-8") as f:
-                json.dump({}, f, ensure_ascii=False, indent=2)
-        
-        if not os.path.exists(self.user_data_file):
-            with open(self.user_data_file, "w", encoding="utf-8") as f:
-                json.dump({}, f, ensure_ascii=False, indent=2)
+        try:
+            if not os.path.exists(self.config_file):
+                with open(self.config_file, "w", encoding="utf-8") as f:
+                    json.dump({}, f, ensure_ascii=False, indent=2)
+            
+            if not os.path.exists(self.group_data_file):
+                with open(self.group_data_file, "w", encoding="utf-8") as f:
+                    json.dump({}, f, ensure_ascii=False, indent=2)
+            
+            if not os.path.exists(self.user_data_file):
+                with open(self.user_data_file, "w", encoding="utf-8") as f:
+                    json.dump({}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.log_error(e, "初始化数据文件")
+            raise ConfigError("初始化数据文件失败")
 
-    def load_config(self) -> dict:
+    def load_config(self):
         """加载配置"""
-        try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"加载配置文件失败: {str(e)}")
-            return {}
+        # API密钥
+        self.api_keys = self.config.get('api_keys', {})
+        
+        # 管理员设置
+        admin_settings = self.config.get('admin_settings', {})
+        self.super_admins = set(admin_settings.get('super_admin', '').split(','))
+        self.group_admins = set(admin_settings.get('group_admin', '').split(','))
+        
+        # 群设置
+        group_settings = self.config.get('group_settings', {})
+        self.enabled_groups = set(group_settings.get('enabled_groups', '').split(','))
+        self.welcome_message = group_settings.get('welcome_message', '欢迎 {user_name} 加入 {group_name}！')
+        
+        # 自动审核设置
+        auto_review = group_settings.get('auto_review', {})
+        self.auto_review_enabled = auto_review.get('enabled', False)
+        self.min_level = auto_review.get('min_level', 1)
+        self.min_age = auto_review.get('min_age', 30)
+        
+        # 游戏设置
+        game_settings = self.config.get('game_settings', {})
+        gamble_settings = game_settings.get('gamble', {})
+        self.min_bet = gamble_settings.get('min_bet', 10)
+        self.max_bet = gamble_settings.get('max_bet', 1000)
+        self.win_rate = gamble_settings.get('win_rate', 0.5)
+        
+        # 安全设置
+        security_settings = self.config.get('security_settings', {})
+        keyword_filter = security_settings.get('keyword_filter', {})
+        self.keyword_filter_enabled = keyword_filter.get('enabled', True)
+        self.sensitive_words = set(keyword_filter.get('words', '').split('\n'))
+        self.keyword_action = keyword_filter.get('action', 'warn')
+        self.warning_threshold = security_settings.get('warning_threshold', 3)
+        
+        # 用户警告记录
+        self.user_warnings = {}
 
-    def save_config(self):
-        """保存配置"""
-        try:
-            with open(self.config_file, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"保存配置文件失败: {str(e)}")
+    def is_admin(self, user_id: str) -> bool:
+        """检查用户是否是管理员"""
+        return user_id in self.super_admins or user_id in self.group_admins
+        
+    def is_super_admin(self, user_id: str) -> bool:
+        """检查用户是否是超级管理员"""
+        return user_id in self.super_admins
+        
+    def is_group_enabled(self, group_id: str) -> bool:
+        """检查群是否启用插件"""
+        return group_id in self.enabled_groups
+        
+    def check_sensitive_words(self, text: str) -> Optional[str]:
+        """检查文本是否包含敏感词"""
+        if not self.keyword_filter_enabled:
+            return None
+        for word in self.sensitive_words:
+            if word and word in text:
+                return word
+        return None
+        
+    def handle_sensitive_word(self, event: AstrMessageEvent, word: str):
+        """处理敏感词"""
+        user_id = event.get_sender_id()
+        if user_id not in self.user_warnings:
+            self.user_warnings[user_id] = 0
+            
+        self.user_warnings[user_id] += 1
+        
+        if self.user_warnings[user_id] >= self.warning_threshold:
+            if self.keyword_action == 'kick':
+                yield event.kick_result()
+            elif self.keyword_action == 'ban':
+                yield event.ban_result()
+        else:
+            yield event.plain_result(f"警告：检测到敏感词 '{word}'，这是第 {self.user_warnings[user_id]} 次警告")
+            
+    @filter.command("reload")
+    async def reload_config(self, event: AstrMessageEvent):
+        """重载配置"""
+        if not self.is_super_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        self.load_config()
+        yield event.plain_result("配置已重载")
+        
+    @filter.command("setwelcome")
+    async def set_welcome(self, event: AstrMessageEvent, message: str):
+        """设置群欢迎语"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        self.config['group_settings']['welcome_message'] = message
+        self.config.save_config()
+        self.welcome_message = message
+        yield event.plain_result("欢迎语已更新")
+        
+    @filter.command("addadmin")
+    async def add_admin(self, event: AstrMessageEvent, user_id: str):
+        """添加管理员"""
+        if not self.is_super_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        self.group_admins.add(user_id)
+        self.config['admin_settings']['group_admin'] = ','.join(self.group_admins)
+        self.config.save_config()
+        yield event.plain_result(f"已添加管理员 {user_id}")
+        
+    @filter.command("deladmin")
+    async def del_admin(self, event: AstrMessageEvent, user_id: str):
+        """删除管理员"""
+        if not self.is_super_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        if user_id in self.group_admins:
+            self.group_admins.remove(user_id)
+            self.config['admin_settings']['group_admin'] = ','.join(self.group_admins)
+            self.config.save_config()
+            yield event.plain_result(f"已删除管理员 {user_id}")
+        else:
+            yield event.plain_result("该用户不是管理员")
+            
+    @filter.command("enablegroup")
+    async def enable_group(self, event: AstrMessageEvent, group_id: str):
+        """启用群"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        self.enabled_groups.add(group_id)
+        self.config['group_settings']['enabled_groups'] = ','.join(self.enabled_groups)
+        self.config.save_config()
+        yield event.plain_result(f"已启用群 {group_id}")
+        
+    @filter.command("disablegroup")
+    async def disable_group(self, event: AstrMessageEvent, group_id: str):
+        """禁用群"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        if group_id in self.enabled_groups:
+            self.enabled_groups.remove(group_id)
+            self.config['group_settings']['enabled_groups'] = ','.join(self.enabled_groups)
+            self.config.save_config()
+            yield event.plain_result(f"已禁用群 {group_id}")
+        else:
+            yield event.plain_result("该群未启用")
+            
+    @filter.command("addword")
+    async def add_sensitive_word(self, event: AstrMessageEvent, word: str):
+        """添加敏感词"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        self.sensitive_words.add(word)
+        self.config['security_settings']['keyword_filter']['words'] = '\n'.join(self.sensitive_words)
+        self.config.save_config()
+        yield event.plain_result(f"已添加敏感词 {word}")
+        
+    @filter.command("delword")
+    async def del_sensitive_word(self, event: AstrMessageEvent, word: str):
+        """删除敏感词"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        if word in self.sensitive_words:
+            self.sensitive_words.remove(word)
+            self.config['security_settings']['keyword_filter']['words'] = '\n'.join(self.sensitive_words)
+            self.config.save_config()
+            yield event.plain_result(f"已删除敏感词 {word}")
+        else:
+            yield event.plain_result("该敏感词不存在")
+            
+    @filter.command("setaction")
+    async def set_keyword_action(self, event: AstrMessageEvent, action: str):
+        """设置敏感词触发动作"""
+        if not self.is_admin(event.get_sender_id()):
+            yield event.plain_result("权限不足")
+            return
+            
+        if action not in ['warn', 'kick', 'ban']:
+            yield event.plain_result("无效的动作，可选值：warn、kick、ban")
+            return
+            
+        self.keyword_action = action
+        self.config['security_settings']['keyword_filter']['action'] = action
+        self.config.save_config()
+        yield event.plain_result(f"已设置敏感词触发动作为 {action}")
+        
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """消息处理"""
+        # 检查群是否启用
+        group_id = event.get_group_id()
+        if group_id and not self.is_group_enabled(group_id):
+            return
+            
+        # 检查敏感词
+        text = event.message_str
+        sensitive_word = self.check_sensitive_words(text)
+        if sensitive_word:
+            yield from self.handle_sensitive_word(event, sensitive_word)
+            
+    async def terminate(self):
+        """插件终止时保存配置"""
+        self.config.save_config()
 
-    def load_data(self, file_path: str) -> dict:
-        """加载数据文件"""
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"加载数据文件失败: {str(e)}")
-            return {}
+    async def check_api_key(self, api_name: str) -> bool:
+        """检查API密钥是否配置"""
+        api_config = self.config.get(f"{api_name}_api", {})
+        if not api_config or not api_config.get("api_key"):
+            self.logger.warning(f"{api_name} API密钥未配置")
+            return False
+        return True
 
-    def save_data(self, file_path: str, data: dict):
-        """保存数据文件"""
+    async def make_api_request(self, api_name: str, endpoint: str, method: str = "GET", **kwargs) -> dict:
+        """发送API请求"""
+        if not await self.check_api_key(api_name):
+            raise APIError(f"{api_name} API未配置")
+
+        api_config = self.config.get(f"{api_name}_api", {})
+        base_url = api_config.get("base_url")
+        api_key = api_config.get("api_key")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            async with aiohttp.ClientSession() as session:
+                if method.upper() == "GET":
+                    async with session.get(f"{base_url}/{endpoint}", headers=headers, params=kwargs) as resp:
+                        if resp.status != 200:
+                            raise APIError(f"API请求失败: {resp.status}")
+                        return await resp.json()
+                else:
+                    async with session.post(f"{base_url}/{endpoint}", headers=headers, json=kwargs) as resp:
+                        if resp.status != 200:
+                            raise APIError(f"API请求失败: {resp.status}")
+                        return await resp.json()
         except Exception as e:
-            logger.error(f"保存数据文件失败: {str(e)}")
+            self.log_error(e, f"API请求 {api_name}")
+            raise APIError(f"API请求失败: {str(e)}")
 
     async def periodic_tasks(self):
         """定时任务"""
@@ -114,55 +357,69 @@ class QGCJPlugin(Star):
                 await self.check_new_members()
                 await asyncio.sleep(60)  # 每分钟检查一次
             except Exception as e:
-                logger.error(f"定时任务执行失败: {str(e)}")
+                self.log_error(e, "定时任务")
                 await asyncio.sleep(60)
 
     async def check_sign_in_reset(self):
         """检查签到重置"""
-        user_data = self.load_data(self.user_data_file)
-        now = datetime.now()
-        for user_id, data in user_data.items():
-            if "last_sign_in" in data:
-                last_sign_in = datetime.fromisoformat(data["last_sign_in"])
-                if (now - last_sign_in).days >= 1:
-                    data["can_sign_in"] = True
-        self.save_data(self.user_data_file, user_data)
+        try:
+            user_data = self.load_data(self.user_data_file)
+            now = datetime.now()
+            for user_id, data in user_data.items():
+                if "last_sign_in" in data:
+                    last_sign_in = datetime.fromisoformat(data["last_sign_in"])
+                    if (now - last_sign_in).days >= 1:
+                        data["can_sign_in"] = True
+            self.save_data(self.user_data_file, user_data)
+        except Exception as e:
+            self.log_error(e, "检查签到重置")
 
     async def check_game_cooldown(self):
         """检查游戏冷却"""
-        user_data = self.load_data(self.user_data_file)
-        now = datetime.now()
-        for user_id, data in user_data.items():
-            if "game_cooldown" in data:
-                cooldown_time = datetime.fromisoformat(data["game_cooldown"])
-                if now >= cooldown_time:
-                    data["can_play_game"] = True
-                    del data["game_cooldown"]
-        self.save_data(self.user_data_file, user_data)
+        try:
+            user_data = self.load_data(self.user_data_file)
+            now = datetime.now()
+            for user_id, data in user_data.items():
+                if "game_cooldown" in data:
+                    cooldown_time = datetime.fromisoformat(data["game_cooldown"])
+                    if now >= cooldown_time:
+                        data["can_play_game"] = True
+                        del data["game_cooldown"]
+            self.save_data(self.user_data_file, user_data)
+        except Exception as e:
+            self.log_error(e, "检查游戏冷却")
 
     async def update_group_stats(self):
         """更新群统计信息"""
-        group_data = self.load_data(self.group_data_file)
-        for group_id in group_data:
-            # 这里需要根据具体平台实现获取群成员信息的功能
-            pass
+        try:
+            group_data = self.load_data(self.group_data_file)
+            for group_id in group_data:
+                # 这里需要根据具体平台实现获取群成员信息的功能
+                pass
+        except Exception as e:
+            self.log_error(e, "更新群统计")
 
     async def check_new_members(self):
         """检查新成员"""
         if not self.config.get("auto_review", {}).get("enabled", False):
             return
             
-        group_data = self.load_data(self.group_data_file)
-        for group_id, data in group_data.items():
-            if "pending_members" in data:
-                for member_id in data["pending_members"]:
-                    # 检查新成员
-                    await self.review_new_member(group_id, member_id)
+        try:
+            group_data = self.load_data(self.group_data_file)
+            for group_id, data in group_data.items():
+                if "pending_members" in data:
+                    for member_id in data["pending_members"]:
+                        await self.review_new_member(group_id, member_id)
+        except Exception as e:
+            self.log_error(e, "检查新成员")
 
     async def review_new_member(self, group_id: str, member_id: str):
         """审核新成员"""
-        # 这里需要根据具体平台实现审核功能
-        pass
+        try:
+            # 这里需要根据具体平台实现审核功能
+            pass
+        except Exception as e:
+            self.log_error(e, f"审核新成员 {member_id}")
 
     @filter.command("help")
     async def help_command(self, event: AstrMessageEvent):
@@ -203,174 +460,6 @@ class QGCJPlugin(Star):
    /translate - 翻译功能
    /news - 新闻资讯"""
         yield event.plain_result(help_text)
-
-    @filter.command("welcome")
-    async def welcome_command(self, event: AstrMessageEvent, message: str = ""):
-        """设置群欢迎语"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能设置欢迎语！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        group_data = self.load_data(self.group_data_file)
-        if not message:
-            current_welcome = group_data.get(group_id, {}).get("welcome", "未设置")
-            yield event.plain_result(f"当前欢迎语：{current_welcome}\n使用 /welcome 新欢迎语 来设置新的欢迎语")
-            return
-
-        if group_id not in group_data:
-            group_data[group_id] = {}
-        group_data[group_id]["welcome"] = message
-        self.save_data(self.group_data_file, group_data)
-        yield event.plain_result("欢迎语设置成功！")
-
-    @filter.command("ban")
-    async def ban_command(self, event: AstrMessageEvent, user_id: str = "", duration: int = 0):
-        """禁言成员"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not user_id or duration <= 0:
-            yield event.plain_result("请指定要禁言的成员ID和禁言时长（分钟）！")
-            return
-
-        # 这里需要根据具体平台实现禁言功能
-        yield event.plain_result(f"已将成员 {user_id} 禁言 {duration} 分钟")
-
-    @filter.command("unban")
-    async def unban_command(self, event: AstrMessageEvent, user_id: str = ""):
-        """解除禁言"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not user_id:
-            yield event.plain_result("请指定要解除禁言的成员ID！")
-            return
-
-        # 这里需要根据具体平台实现解除禁言功能
-        yield event.plain_result(f"已解除成员 {user_id} 的禁言")
-
-    @filter.command("kick")
-    async def kick_command(self, event: AstrMessageEvent, user_id: str = ""):
-        """踢出成员"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not user_id:
-            yield event.plain_result("请指定要踢出的成员ID！")
-            return
-
-        # 这里需要根据具体平台实现踢出功能
-        yield event.plain_result(f"已将成员 {user_id} 踢出群聊")
-
-    @filter.command("mute")
-    async def mute_command(self, event: AstrMessageEvent):
-        """全体禁言"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        # 这里需要根据具体平台实现全体禁言功能
-        yield event.plain_result("已开启全体禁言")
-
-    @filter.command("unmute")
-    async def unmute_command(self, event: AstrMessageEvent):
-        """解除全体禁言"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        # 这里需要根据具体平台实现解除全体禁言功能
-        yield event.plain_result("已解除全体禁言")
-
-    @filter.command("notice")
-    async def notice_command(self, event: AstrMessageEvent, message: str = ""):
-        """发布群公告"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not message:
-            yield event.plain_result("请指定要发布的公告内容！")
-            return
-
-        # 这里需要根据具体平台实现发布公告功能
-        yield event.plain_result("群公告发布成功！")
-
-    @filter.command("admin")
-    async def admin_command(self, event: AstrMessageEvent, user_id: str = ""):
-        """设置管理员"""
-        if not event.is_admin():
-            yield event.plain_result("只有群主才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not user_id:
-            yield event.plain_result("请指定要设置为管理员的成员ID！")
-            return
-
-        # 这里需要根据具体平台实现设置管理员功能
-        yield event.plain_result(f"已将成员 {user_id} 设置为管理员")
-
-    @filter.command("unadmin")
-    async def unadmin_command(self, event: AstrMessageEvent, user_id: str = ""):
-        """取消管理员"""
-        if not event.is_admin():
-            yield event.plain_result("只有群主才能使用此命令！")
-            return
-
-        group_id = event.get_group_id()
-        if not group_id:
-            yield event.plain_result("请在群聊中使用此命令！")
-            return
-
-        if not user_id:
-            yield event.plain_result("请指定要取消管理员的成员ID！")
-            return
-
-        # 这里需要根据具体平台实现取消管理员功能
-        yield event.plain_result(f"已取消成员 {user_id} 的管理员权限")
 
     @filter.command("sign")
     async def sign_command(self, event: AstrMessageEvent):
@@ -675,23 +764,8 @@ class QGCJPlugin(Star):
             return
 
         self.config["command_prefix"] = prefix
-        self.save_config()
+        self.config.save_config()
         yield event.plain_result(f"命令前缀已设置为：{prefix}")
-
-    @filter.command("setwelcome")
-    async def set_welcome_command(self, event: AstrMessageEvent, message: str = ""):
-        """设置默认欢迎语"""
-        if not event.is_admin():
-            yield event.plain_result("只有管理员才能设置欢迎语！")
-            return
-
-        if not message:
-            yield event.plain_result("请输入新的欢迎语！")
-            return
-
-        self.config["default_welcome"] = message
-        self.save_config()
-        yield event.plain_result("默认欢迎语设置成功！")
 
     @filter.command("setreview")
     async def set_review_command(self, event: AstrMessageEvent, action: str = ""):
@@ -705,7 +779,7 @@ class QGCJPlugin(Star):
             return
 
         self.config["auto_review"]["action"] = action
-        self.save_config()
+        self.config.save_config()
         yield event.plain_result(f"自动审核动作已设置为：{action}")
 
     @filter.command("addkeyword")
@@ -724,7 +798,7 @@ class QGCJPlugin(Star):
         
         if keyword not in self.config["auto_review"]["keywords"]:
             self.config["auto_review"]["keywords"].append(keyword)
-            self.save_config()
+            self.config.save_config()
             yield event.plain_result(f"关键词 {keyword} 添加成功！")
         else:
             yield event.plain_result("该关键词已存在！")
@@ -742,7 +816,7 @@ class QGCJPlugin(Star):
 
         if keyword in self.config["auto_review"]["keywords"]:
             self.config["auto_review"]["keywords"].remove(keyword)
-            self.save_config()
+            self.config.save_config()
             yield event.plain_result(f"关键词 {keyword} 删除成功！")
         else:
             yield event.plain_result("该关键词不存在！")
@@ -768,8 +842,4 @@ class QGCJPlugin(Star):
         result += f"新成员数：{stats.get('new_members', 0)}\n"
         result += f"退群成员数：{stats.get('left_members', 0)}"
         
-        yield event.plain_result(result)
-
-    async def terminate(self):
-        """插件卸载时的清理工作"""
-        pass 
+        yield event.plain_result(result) 

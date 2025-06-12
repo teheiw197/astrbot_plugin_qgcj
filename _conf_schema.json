@@ -1,0 +1,183 @@
+{
+  "api_keys": {
+    "description": "API密钥配置",
+    "type": "object",
+    "hint": "配置各个功能所需的API密钥",
+    "items": {
+      "netease_music": {
+        "description": "网易云音乐API密钥",
+        "type": "string",
+        "hint": "用于点歌功能"
+      },
+      "qq_music": {
+        "description": "QQ音乐API密钥",
+        "type": "string",
+        "hint": "用于点歌功能"
+      },
+      "weather": {
+        "description": "天气API密钥",
+        "type": "string",
+        "hint": "用于天气查询功能"
+      },
+      "translate": {
+        "description": "翻译API密钥",
+        "type": "string",
+        "hint": "用于翻译功能"
+      },
+      "news": {
+        "description": "新闻API密钥",
+        "type": "string",
+        "hint": "用于新闻资讯功能"
+      }
+    }
+  },
+  "admin_settings": {
+    "description": "管理员设置",
+    "type": "object",
+    "hint": "配置管理员相关设置",
+    "items": {
+      "super_admin": {
+        "description": "超级管理员QQ号",
+        "type": "string",
+        "hint": "拥有最高权限的管理员QQ号，多个用逗号分隔"
+      },
+      "group_admin": {
+        "description": "群管理员QQ号",
+        "type": "string",
+        "hint": "群管理员QQ号，多个用逗号分隔"
+      }
+    }
+  },
+  "group_settings": {
+    "description": "群设置",
+    "type": "object",
+    "hint": "配置群相关设置",
+    "items": {
+      "enabled_groups": {
+        "description": "启用的群号",
+        "type": "string",
+        "hint": "启用插件的群号，多个用逗号分隔"
+      },
+      "welcome_message": {
+        "description": "群欢迎语",
+        "type": "text",
+        "hint": "新成员加入时的欢迎语，支持变量：{user_name}、{group_name}"
+      },
+      "auto_review": {
+        "description": "自动审核设置",
+        "type": "object",
+        "hint": "新成员自动审核设置",
+        "items": {
+          "enabled": {
+            "description": "是否启用自动审核",
+            "type": "bool",
+            "default": false
+          },
+          "min_level": {
+            "description": "最低等级要求",
+            "type": "int",
+            "default": 1
+          },
+          "min_age": {
+            "description": "最低账号年龄(天)",
+            "type": "int",
+            "default": 30
+          }
+        }
+      }
+    }
+  },
+  "game_settings": {
+    "description": "游戏设置",
+    "type": "object",
+    "hint": "配置游戏相关参数",
+    "items": {
+      "gamble": {
+        "description": "赌博游戏设置",
+        "type": "object",
+        "items": {
+          "min_bet": {
+            "description": "最小赌注",
+            "type": "int",
+            "default": 10
+          },
+          "max_bet": {
+            "description": "最大赌注",
+            "type": "int",
+            "default": 1000
+          },
+          "win_rate": {
+            "description": "获胜概率",
+            "type": "float",
+            "default": 0.5
+          }
+        }
+      },
+      "lottery": {
+        "description": "抽奖设置",
+        "type": "object",
+        "items": {
+          "prizes": {
+            "description": "奖品设置",
+            "type": "object",
+            "items": {
+              "first": {
+                "description": "一等奖",
+                "type": "object",
+                "items": {
+                  "name": {
+                    "description": "奖品名称",
+                    "type": "string",
+                    "default": "一等奖"
+                  },
+                  "probability": {
+                    "description": "中奖概率",
+                    "type": "float",
+                    "default": 0.01
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "security_settings": {
+    "description": "安全设置",
+    "type": "object",
+    "hint": "配置安全相关参数",
+    "items": {
+      "keyword_filter": {
+        "description": "关键词过滤",
+        "type": "object",
+        "items": {
+          "enabled": {
+            "description": "是否启用关键词过滤",
+            "type": "bool",
+            "default": true
+          },
+          "words": {
+            "description": "敏感词列表",
+            "type": "text",
+            "hint": "每行一个敏感词",
+            "editor_mode": true,
+            "editor_language": "text"
+          },
+          "action": {
+            "description": "触发动作",
+            "type": "string",
+            "options": ["warn", "kick", "ban"],
+            "default": "warn"
+          }
+        }
+      },
+      "warning_threshold": {
+        "description": "警告阈值",
+        "type": "int",
+        "default": 3,
+        "hint": "达到多少次警告后执行惩罚"
+      }
+    }
+  }
+} 
