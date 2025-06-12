@@ -3,10 +3,12 @@ import json
 import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+from .config import GameConfig
 
 class GameSystem:
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, config: GameConfig):
         self.data_dir = data_dir
+        self.config = config
         self.wallet_file = os.path.join(data_dir, "wallet.json")
         self.lottery_file = os.path.join(data_dir, "lottery.json")
         self.load_data()
@@ -27,11 +29,7 @@ class GameSystem:
         else:
             self.lottery_data = {
                 "last_draw": {},
-                "prizes": {
-                    "first": {"name": "一等奖", "probability": 0.01},
-                    "second": {"name": "二等奖", "probability": 0.05},
-                    "third": {"name": "三等奖", "probability": 0.1}
-                }
+                "prizes": self.config.lottery_prizes
             }
             
     def save_data(self):
@@ -44,20 +42,32 @@ class GameSystem:
             
     def get_balance(self, user_id: str) -> int:
         """获取用户余额"""
-        return self.wallets.get(user_id, 0)
+        if user_id not in self.wallets:
+            self.wallets[user_id] = self.config.initial_balance
+            self.save_data()
+        return self.wallets[user_id]
         
     def add_balance(self, user_id: str, amount: int) -> int:
         """增加用户余额"""
         if user_id not in self.wallets:
-            self.wallets[user_id] = 0
-        self.wallets[user_id] += amount
+            self.wallets[user_id] = self.config.initial_balance
+            
+        new_balance = self.wallets[user_id] + amount
+        if new_balance > self.config.max_balance:
+            new_balance = self.config.max_balance
+            
+        self.wallets[user_id] = new_balance
         self.save_data()
         return self.wallets[user_id]
         
     def deduct_balance(self, user_id: str, amount: int) -> bool:
         """扣除用户余额"""
-        if user_id not in self.wallets or self.wallets[user_id] < amount:
+        if user_id not in self.wallets:
+            self.wallets[user_id] = self.config.initial_balance
+            
+        if self.wallets[user_id] < amount:
             return False
+            
         self.wallets[user_id] -= amount
         self.save_data()
         return True
@@ -80,7 +90,7 @@ class GameSystem:
             return True
             
         last_time = datetime.fromisoformat(last_draw)
-        return datetime.now() - last_time > timedelta(days=1)
+        return datetime.now() - last_time > timedelta(seconds=self.config.lottery_cooldown)
         
     def draw_lottery(self, user_id: str) -> Optional[str]:
         """抽奖"""
@@ -94,16 +104,18 @@ class GameSystem:
             current_prob += prize["probability"]
             if rand <= current_prob:
                 self.lottery_data["last_draw"][user_id] = datetime.now().isoformat()
+                self.add_balance(user_id, prize["reward"])
                 self.save_data()
                 return prize["name"]
                 
         return "谢谢参与"
         
-    def set_prize(self, prize_id: str, name: str, probability: float):
+    def set_prize(self, prize_id: str, name: str, probability: float, reward: int):
         """设置奖品"""
         self.lottery_data["prizes"][prize_id] = {
             "name": name,
-            "probability": probability
+            "probability": probability,
+            "reward": reward
         }
         self.save_data()
         

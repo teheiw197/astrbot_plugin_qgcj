@@ -5,10 +5,12 @@ import random
 import string
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
+from .config import ToolsConfig
 
 class ToolsSystem:
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, config: ToolsConfig):
         self.data_dir = data_dir
+        self.config = config
         self.reminder_file = os.path.join(data_dir, "reminders.json")
         self.load_data()
         
@@ -35,6 +37,9 @@ class ToolsSystem:
             if user_id not in self.reminders:
                 self.reminders[user_id] = []
                 
+            if len(self.reminders[user_id]) >= self.config.max_reminders:
+                return False
+                
             self.reminders[user_id].append({
                 "content": content,
                 "time": time
@@ -57,8 +62,13 @@ class ToolsSystem:
         self.save_data()
         return True
         
-    def generate_password(self, length: int = 12, include_special: bool = True) -> str:
+    def generate_password(self, length: int = None, include_special: bool = None) -> str:
         """生成随机密码"""
+        if length is None:
+            length = self.config.password_min_length
+        if include_special is None:
+            include_special = self.config.password_require_special
+            
         chars = string.ascii_letters + string.digits
         if include_special:
             chars += string.punctuation
@@ -81,7 +91,13 @@ class ToolsSystem:
             if not re.match(r'^[0-9+\-*/().]+$', expression):
                 return None
                 
-            return eval(expression)
+            result = eval(expression)
+            
+            # 检查结果位数
+            if isinstance(result, float):
+                result = round(result, self.config.calculator_max_digits)
+                
+            return result
         except:
             return None
             
@@ -98,7 +114,8 @@ class ToolsSystem:
         if from_currency not in rates or to_currency not in rates:
             return None
             
-        return amount * rates[to_currency] / rates[from_currency]
+        result = amount * rates[to_currency] / rates[from_currency]
+        return round(result, self.config.calculator_max_digits)
         
     def format_time(self, timestamp: float) -> str:
         """格式化时间戳"""
@@ -118,4 +135,24 @@ class ToolsSystem:
         
         if t1 and t2:
             return abs(t1 - t2)
-        return None 
+        return None
+        
+    def check_reminders(self) -> List[Dict]:
+        """检查提醒"""
+        now = datetime.now()
+        triggered = []
+        
+        for user_id, reminders in self.reminders.items():
+            for i, reminder in enumerate(reminders):
+                try:
+                    reminder_time = datetime.fromisoformat(reminder["time"])
+                    if now >= reminder_time:
+                        triggered.append({
+                            "user_id": user_id,
+                            "content": reminder["content"],
+                            "index": i
+                        })
+                except:
+                    continue
+                    
+        return triggered 

@@ -2,9 +2,12 @@ import aiohttp
 import json
 from typing import Optional, Dict, List
 import random
+from datetime import datetime, timedelta
+from .config import EntertainmentConfig
 
 class EntertainmentSystem:
-    def __init__(self, api_keys: Dict[str, str]):
+    def __init__(self, config: EntertainmentConfig, api_keys: Dict[str, str]):
+        self.config = config
         self.api_keys = api_keys
         self.jokes = [
             "为什么程序员总是分不清万圣节和圣诞节？因为 Oct 31 == Dec 25",
@@ -13,9 +16,14 @@ class EntertainmentSystem:
             "有一天，我问我的代码：'你爱我吗？' 它说：'404 Not Found'。",
             "为什么程序员总是分不清现实和虚拟？因为他们的生活就是0和1。"
         ]
+        self.last_joke_update = datetime.now()
+        self.weather_cache = {}
         
-    async def get_music(self, keyword: str, source: str = "netease") -> Optional[Dict]:
+    async def get_music(self, keyword: str, source: str = None) -> Optional[Dict]:
         """获取音乐信息"""
+        if source is None:
+            source = random.choice(self.config.music_sources)
+            
         if source == "netease":
             return await self._get_netease_music(keyword)
         elif source == "qq":
@@ -68,6 +76,11 @@ class EntertainmentSystem:
         
     def get_joke(self) -> str:
         """获取笑话"""
+        # 检查是否需要更新笑话列表
+        if datetime.now() - self.last_joke_update > timedelta(seconds=self.config.joke_update_interval):
+            # 这里可以添加从API获取新笑话的逻辑
+            self.last_joke_update = datetime.now()
+            
         return random.choice(self.jokes)
         
     async def get_weather(self, city: str) -> Optional[Dict]:
@@ -75,19 +88,28 @@ class EntertainmentSystem:
         if not self.api_keys.get("weather"):
             return None
             
+        # 检查缓存
+        if city in self.weather_cache:
+            cache_time, cache_data = self.weather_cache[city]
+            if datetime.now() - cache_time < timedelta(seconds=self.config.weather_cache_time):
+                return cache_data
+                
         async with aiohttp.ClientSession() as session:
             try:
                 url = f"http://api.weatherapi.com/v1/current.json?key={self.api_keys['weather']}&q={city}"
                 async with session.get(url) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return {
+                        result = {
                             "city": data["location"]["name"],
                             "temp": data["current"]["temp_c"],
                             "condition": data["current"]["condition"]["text"],
                             "humidity": data["current"]["humidity"],
                             "wind": data["current"]["wind_kph"]
                         }
+                        # 更新缓存
+                        self.weather_cache[city] = (datetime.now(), result)
+                        return result
             except Exception as e:
                 print(f"获取天气信息失败: {e}")
         return None
@@ -118,6 +140,9 @@ class EntertainmentSystem:
         if not self.api_keys.get("news"):
             return None
             
+        if category not in self.config.news_categories:
+            category = "general"
+            
         async with aiohttp.ClientSession() as session:
             try:
                 url = f"https://newsapi.org/v2/top-headlines?country=cn&category={category}&apiKey={self.api_keys['news']}"
@@ -128,7 +153,7 @@ class EntertainmentSystem:
                             "title": article["title"],
                             "description": article["description"],
                             "url": article["url"]
-                        } for article in data["articles"][:5]]
+                        } for article in data["articles"][:self.config.max_news_count]]
             except Exception as e:
                 print(f"获取新闻失败: {e}")
         return None 
