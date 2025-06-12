@@ -1,5 +1,29 @@
-name: helloworld # 这是你的插件的唯一识别名。
-desc: 这是 AstrBot 的默认插件，支持关键词回复。 # 插件简短描述
-version: v1.3 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: qgcj
+author: 特嘿工作室
+desc: 一个功能丰富的群管理插件，包含游戏系统、娱乐功能、群管理等功能
+version: 1.0.0
+repo: https://github.com/your-repo/qgcj
+reserved: false
+activated: true
+star_cls_type: QGCJPlugin
+module_path: data/plugins/qgcj/main.py
+root_dir_name: qgcj
+star_handler_full_names:
+  - qgcj.help_command
+  - qgcj.sign_command
+  - qgcj.wallet_command
+  - qgcj.gamble_command
+  - qgcj.guess_command
+  - qgcj.fight_command
+  - qgcj.lottery_command
+  - qgcj.music_command
+  - qgcj.joke_command
+  - qgcj.weather_command
+  - qgcj.translate_command
+  - qgcj.news_command
+  - qgcj.setprefix_command
+  - qgcj.setwelcome_command
+  - qgcj.setreview_command
+  - qgcj.addkeyword_command
+  - qgcj.delkeyword_command
+  - qgcj.stats_command 
